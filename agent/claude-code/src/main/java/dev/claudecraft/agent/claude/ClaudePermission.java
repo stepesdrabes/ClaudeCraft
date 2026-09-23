@@ -29,4 +29,10 @@ final class ClaudePermission extends PendingRequest implements PermissionRequest
         if (remember) decision.put("updatedPermissions", request().get("permission_suggestions"));
         respond(decision);
     }
+
+    @Override
+    public void allowAndSetMode(String mode) {
+        Json setMode = Json.object().put("type", "setMode").put("mode", mode).put("destination", "session");
+        respond(Json.object().put("behavior", "allow").put("updatedInput", input()).put("updatedPermissions", Json.array().add(setMode)));
+    }
 }

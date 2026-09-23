@@ -1,10 +1,12 @@
 package dev.claudecraft.agent.claude;
 
 import dev.claudecraft.agent.ConnectorInfo;
+import dev.claudecraft.agent.ImageData;
 import dev.claudecraft.agent.PermissionRequest;
 import dev.claudecraft.agent.Session;
 import dev.claudecraft.agent.SessionListener;
 import dev.claudecraft.agent.SessionSpec;
+import dev.claudecraft.agent.ToolOutput;
 import dev.claudecraft.agent.ToolUse;
 import dev.claudecraft.agent.TurnResult;
 import dev.claudecraft.agent.tool.Schema;
@@ -47,7 +49,7 @@ class LiveSessionTest {
             .tools("minecraft", Collections.singletonList(secret));
         Session session = connector.open(spec, new SessionListener() {
             @Override
-            public void onStarted(String sessionId, String model) {
+            public void onStarted(String sessionId, String model, String cwd) {
                 events.add("started " + model);
             }
 
@@ -62,8 +64,8 @@ class LiveSessionTest {
             }
 
             @Override
-            public void onToolResult(String toolUseId, String output, boolean error) {
-                events.add("result " + output);
+            public void onToolResult(ToolOutput output) {
+                events.add("result " + output.text());
             }
 
             @Override
@@ -77,7 +79,7 @@ class LiveSessionTest {
                 turn.complete(result);
             }
         });
-        session.send("Call the get_secret tool, then reply with just the number.");
+        session.send("Call the get_secret tool, then reply with just the number.", Collections.<ImageData>emptyList());
         TurnResult result = turn.get(120, TimeUnit.SECONDS);
         session.close();
 

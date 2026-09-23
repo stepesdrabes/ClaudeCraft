@@ -2,6 +2,7 @@ package dev.claudecraft.legacy;
 
 import dev.claudecraft.core.Platform;
 import dev.claudecraft.core.game.Game;
+import dev.claudecraft.core.ui.Image;
 import dev.claudecraft.core.ui.TextField;
 import dev.claudecraft.core.ui.TextMetrics;
 import dev.claudecraft.core.view.Panel;
@@ -18,6 +19,7 @@ import net.minecraft.util.ResourceLocation;
 
 import java.nio.file.Path;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 final class LegacyPlatform implements Platform {
     private static final String MINECRAFT = /*$ minecraft*/ "1.8.9";
@@ -100,6 +102,11 @@ final class LegacyPlatform implements Platform {
     public void closePanel() {
         Minecraft minecraft = Minecraft.getMinecraft();
         if (minecraft.currentScreen instanceof LegacyScreen) minecraft.displayGuiScreen(null);
+    }
+
+    @Override
+    public void screenshot(Consumer<Image> done) {
+        done.accept(LegacyTextures.capture());
     }
 
     @Override

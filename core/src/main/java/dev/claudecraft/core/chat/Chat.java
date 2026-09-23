@@ -1,18 +1,32 @@
 package dev.claudecraft.core.chat;
 
+import dev.claudecraft.agent.ImageData;
+import dev.claudecraft.agent.LiveSession;
+import dev.claudecraft.agent.McpServerInfo;
 import dev.claudecraft.agent.PermissionRequest;
 import dev.claudecraft.agent.QuestionRequest;
 import dev.claudecraft.agent.Session;
 import dev.claudecraft.agent.SessionListener;
 import dev.claudecraft.agent.SessionSpec;
 import dev.claudecraft.agent.SessionSummary;
+import dev.claudecraft.agent.Task;
+import dev.claudecraft.agent.ToolOutput;
 import dev.claudecraft.agent.ToolUse;
 import dev.claudecraft.agent.TurnResult;
+import dev.claudecraft.agent.Usage;
 import dev.claudecraft.agent.json.Json;
+import dev.claudecraft.core.ui.Picture;
 import dev.claudecraft.core.ui.Theme;
 
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 public final class Chat implements SessionListener {
     private static final int TITLE_LENGTH = 60;
@@ -23,30 +37,44 @@ public final class Chat implements SessionListener {
         void finished(Chat chat, TurnResult result);
 
         void needsYou(Chat chat);
+
+        void planUsage(Usage.Plan usage);
     }
 
     private final Host host;
     private final Path workspace;
+    private final Map<String, Task> tasks = new LinkedHashMap<>();
+    private final List<Picture> attachments = new ArrayList<>();
+    private final StringBuilder thinking = new StringBuilder();
+    private Path cwd;
     private Transcript transcript = new Transcript();
     private String sessionId;
+    private String forkOf;
+    private boolean worktree;
     private String title;
     private long updatedAt;
     private Status status = Status.IDLE;
     private String draft = "";
     private String model;
     private String activeModel;
+    private String effort;
     private String mode;
     private Session session;
     private PermissionRequest permission;
     private QuestionRequest question;
     private long turnStartedAt;
     private String step;
-    private final StringBuilder thinking = new StringBuilder();
     private boolean historyLoaded;
+    private volatile Usage.Context context;
+    private volatile List<McpServerInfo> mcpServers;
+    private LiveSession live;
+    private boolean archived;
+    private boolean persistTitle;
 
     Chat(Host host, Path workspace) {
         this.host = host;
         this.workspace = workspace;
+        this.cwd = workspace;
         this.historyLoaded = true;
         this.updatedAt = System.currentTimeMillis();
     }
@@ -54,15 +82,33 @@ public final class Chat implements SessionListener {
     Chat(Host host, Path workspace, SessionSummary summary) {
         this.host = host;
         this.workspace = workspace;
+        this.cwd = summary.cwd();
         this.sessionId = summary.id();
         this.title = summary.title();
         this.updatedAt = summary.updatedAt();
         this.status = Status.DONE;
     }
 
-    public void send(String text) {
-        if (title == null) title = titleFrom(text);
-        transcript.onUserMessage(text);
+    static Chat forkOf(Chat source) {
+        Chat fork = new Chat(source.host, source.workspace);
+        fork.cwd = source.cwd;
+        fork.forkOf = source.sessionId;
+        fork.title = "Fork of " + source.title();
+        fork.persistTitle = true;
+        fork.model = source.model;
+        fork.effort = source.effort;
+        fork.mode = source.mode;
+        fork.historyLoaded = false;
+        return fork;
+    }
+
+    void nameIfUntitled(String text) {
+        if (title == null) title = titleFrom(text.isEmpty() ? "Image" : text);
+    }
+
+    public void send(String text, List<Picture> images) {
+        nameIfUntitled(text);
+        transcript.addUser(text, images);
         try {
             if (session == null || !session.isOpen()) session = host.open(spec(text), this);
         } catch (IllegalStateException e) {
@@ -70,16 +116,27 @@ public final class Chat implements SessionListener {
             status = Status.FAILED;
             return;
         }
-        session.send(text);
-        thinking.setLength(0);
-        status = Status.WORKING;
-        step = "Thinking";
-        turnStartedAt = updatedAt = System.currentTimeMillis();
+        List<ImageData> data = new ArrayList<>();
+        for (Picture image : images) data.add(image.data());
+        session.send(text, data);
+        forkOf = null;
+        worktree = false;
+        startWorking("Thinking");
     }
 
-    private SessionSpec spec(String firstMessage) {
-        SessionSpec spec = new SessionSpec(workspace).model(model).permissionMode(mode);
-        return sessionId != null ? spec.resume(sessionId) : spec.title(titleFrom(firstMessage));
+    SessionSpec spec(String firstMessage) {
+        SessionSpec spec = new SessionSpec(cwd).model(model).effort(effort).permissionMode(mode);
+        if (sessionId != null) return spec.resume(sessionId);
+        if (forkOf != null) return spec.resume(forkOf).fork(true);
+        if (worktree) spec.worktree("");
+        return spec.title(titleFrom(firstMessage));
+    }
+
+    private void startWorking(String step) {
+        thinking.setLength(0);
+        status = Status.WORKING;
+        this.step = step;
+        turnStartedAt = updatedAt = System.currentTimeMillis();
     }
 
     public void interrupt() {
@@ -88,12 +145,49 @@ public final class Chat implements SessionListener {
 
     public void selectModel(String modelId) {
         model = modelId;
-        if (session != null && session.isOpen()) session.setModel(modelId);
+        if (isOpen()) session.setModel(modelId);
+    }
+
+    public void selectEffort(String level) {
+        effort = level;
+        if (isOpen()) session.setEffort(level);
     }
 
     public void selectMode(String modeId) {
         mode = modeId;
-        if (session != null && session.isOpen()) session.setPermissionMode(modeId);
+        if (isOpen()) session.setPermissionMode(modeId);
+    }
+
+    public void stopTask(String taskId) {
+        if (isOpen()) session.stopTask(taskId);
+    }
+
+    public void backgroundTasks() {
+        if (isOpen()) session.backgroundTasks();
+    }
+
+    public void setMcpServerEnabled(String name, boolean enabled) {
+        if (!isOpen()) return;
+        session.setMcpServerEnabled(name, enabled);
+        refreshMcpServers();
+    }
+
+    public void reconnectMcpServer(String name) {
+        if (!isOpen()) return;
+        session.reconnectMcpServer(name);
+        refreshMcpServers();
+    }
+
+    public void refreshContext() {
+        if (isOpen()) session.contextUsage().thenAccept(usage -> context = usage);
+    }
+
+    public void refreshMcpServers() {
+        if (isOpen()) session.mcpServers().thenAccept(servers -> mcpServers = servers);
+    }
+
+    public boolean isOpen() {
+        return session != null && session.isOpen();
     }
 
     public void close() {
@@ -106,10 +200,32 @@ public final class Chat implements SessionListener {
         historyLoaded = true;
     }
 
+    void reloadHistory(Transcript history) {
+        transcript = history;
+        historyLoaded = true;
+    }
+
+    void rename(String title) {
+        this.title = title;
+        if (isOpen()) session.rename(title);
+    }
+
     public void answerPermission(boolean allow, boolean remember) {
+        answerPermission(allow, remember, "The user declined this action.");
+    }
+
+    public void approvePlan(boolean acceptEdits) {
+        if (permission == null) return;
+        if (acceptEdits) permission.allowAndSetMode("acceptEdits");
+        else permission.allow(false);
+        permission = null;
+        resume();
+    }
+
+    public void answerPermission(boolean allow, boolean remember, String feedback) {
         if (permission == null) return;
         if (allow) permission.allow(remember);
-        else permission.deny("The user declined this action.");
+        else permission.deny(feedback);
         permission = null;
         resume();
     }
@@ -133,9 +249,13 @@ public final class Chat implements SessionListener {
     }
 
     @Override
-    public void onStarted(String sessionId, String model) {
+    public void onStarted(String sessionId, String model, String cwd) {
         this.sessionId = sessionId;
         this.activeModel = model;
+        if (cwd != null) this.cwd = Paths.get(cwd);
+        if (persistTitle && isOpen()) session.rename(title);
+        persistTitle = false;
+        refreshMcpServers();
     }
 
     @Override
@@ -163,8 +283,18 @@ public final class Chat implements SessionListener {
     }
 
     @Override
-    public void onToolResult(String toolUseId, String output, boolean error) {
-        transcript.onToolResult(toolUseId, output, error);
+    public void onSubagentToolUse(String parentToolUseId, ToolUse use) {
+        transcript.onSubagentToolUse(parentToolUseId, use);
+    }
+
+    @Override
+    public void onToolResult(ToolOutput output) {
+        transcript.onToolResult(output);
+    }
+
+    @Override
+    public void onTask(Task task) {
+        tasks.put(task.id(), task);
     }
 
     @Override
@@ -195,6 +325,33 @@ public final class Chat implements SessionListener {
     }
 
     @Override
+    public void onPermissionMode(String mode) {
+        this.mode = mode;
+    }
+
+    @Override
+    public void onBusy(boolean busy) {
+        if (busy && !status.isActive()) startWorking("Working");
+    }
+
+    @Override
+    public void onCompacted(long tokensBefore, long tokensAfter) {
+        String detail = tokensAfter > 0 ? " (" + tokens(tokensBefore) + " → " + tokens(tokensAfter) + ")" : "";
+        transcript.notice("Conversation compacted" + detail, Theme.MUTED);
+        refreshContext();
+    }
+
+    @Override
+    public void onNotice(String text) {
+        transcript.notice(text, Theme.MUTED);
+    }
+
+    @Override
+    public void onPlanUsage(Usage.Plan usage) {
+        host.planUsage(usage);
+    }
+
+    @Override
     public void onTurnEnd(TurnResult result) {
         transcript.settle();
         permission = null;
@@ -212,6 +369,8 @@ public final class Chat implements SessionListener {
                 status = Status.FAILED;
                 transcript.notice(result.error() != null ? result.error() : "Something went wrong", Theme.ERROR);
         }
+        refreshContext();
+        refreshMcpServers();
         host.finished(this, result);
     }
 
@@ -223,27 +382,81 @@ public final class Chat implements SessionListener {
     @Override
     public void onClosed() {
         session = null;
+        for (Task task : new ArrayList<>(tasks.values())) {
+            if (task.status().isActive()) tasks.remove(task.id());
+        }
         if (!status.isActive()) return;
         transcript.settle();
         status = Status.FAILED;
         host.finished(this, new TurnResult(TurnResult.Outcome.FAILED, null, "Claude Code stopped", 0, 0));
     }
 
-    private static String titleFrom(String text) {
+    static String titleFrom(String text) {
         String line = text.trim().split("\n", 2)[0];
         return line.length() <= TITLE_LENGTH ? line : line.substring(0, TITLE_LENGTH - 1).trim() + "…";
+    }
+
+    public static String tokens(long count) {
+        if (count >= 1_000_000) return trim(count / 1_000_000.0) + "M";
+        if (count >= 1000) return trim(count / 1000.0) + "k";
+        return String.valueOf(count);
+    }
+
+    private static String trim(double value) {
+        return value >= 100 || value == Math.rint(value) ? String.valueOf(Math.round(value)) : String.format(Locale.ROOT, "%.1f", value);
     }
 
     public Path workspace() {
         return workspace;
     }
 
+    public Path cwd() {
+        return cwd;
+    }
+
+    void moveTo(Path cwd) {
+        this.cwd = cwd;
+    }
+
+    public boolean inWorktree() {
+        return !cwd.equals(workspace) || worktree;
+    }
+
+    public void useWorktree(boolean worktree) {
+        if (sessionId == null) this.worktree = worktree;
+    }
+
     public Transcript transcript() {
         return transcript;
     }
 
+    public Todos todos() {
+        return transcript.todos();
+    }
+
+    public Collection<Task> tasks() {
+        return Collections.unmodifiableCollection(tasks.values());
+    }
+
+    public Task task(String toolUseId) {
+        for (Task task : tasks.values()) if (toolUseId.equals(task.toolUseId())) return task;
+        return null;
+    }
+
+    public List<Picture> attachments() {
+        return attachments;
+    }
+
     public String sessionId() {
         return sessionId;
+    }
+
+    void assignSession(String sessionId) {
+        if (this.sessionId == null) this.sessionId = sessionId;
+    }
+
+    public String forkOf() {
+        return forkOf;
     }
 
     public String title() {
@@ -255,6 +468,7 @@ public final class Chat implements SessionListener {
     }
 
     public Status status() {
+        if (live != null) return live.background() ? Status.of(live.state()) : status;
         return status;
     }
 
@@ -289,6 +503,10 @@ public final class Chat implements SessionListener {
         return activeModel;
     }
 
+    public String effort() {
+        return effort;
+    }
+
     public String mode() {
         return mode;
     }
@@ -301,11 +519,43 @@ public final class Chat implements SessionListener {
         return question;
     }
 
+    public Usage.Context context() {
+        return context;
+    }
+
+    public List<McpServerInfo> mcpServers() {
+        return mcpServers;
+    }
+
+    public LiveSession live() {
+        return live;
+    }
+
+    void setLive(LiveSession live) {
+        this.live = live;
+    }
+
+    public boolean inBackground() {
+        return live != null && live.background();
+    }
+
+    public boolean runningElsewhere() {
+        return live != null && !live.background() && session == null;
+    }
+
+    public boolean archived() {
+        return archived;
+    }
+
+    void setArchived(boolean archived) {
+        this.archived = archived;
+    }
+
     public boolean historyLoaded() {
         return historyLoaded;
     }
 
     public boolean isNew() {
-        return sessionId == null && transcript.isEmpty();
+        return sessionId == null && forkOf == null && transcript.isEmpty();
     }
 }

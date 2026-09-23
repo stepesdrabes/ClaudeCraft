@@ -13,5 +13,6 @@ stonecutter parameters {
         string(current.parsed >= "1.21.11") { replace("ResourceLocation", "Identifier") }
         string(current.parsed >= "26.1") { replace("GuiGraphics;", "GuiGraphicsExtractor;") }
         string(current.parsed >= "26.1") { replace("GuiGraphics graphics", "GuiGraphicsExtractor graphics") }
+        string(current.parsed >= "26.3") { replace("com.mojang.blaze3d.textures.", "com.mojang.renderpearl.api.textures.") }
     }
 }

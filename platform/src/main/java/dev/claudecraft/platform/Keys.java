@@ -29,6 +29,7 @@ final class Keys {
         bind(Key.PAGE_UP, "page.up");
         bind(Key.PAGE_DOWN, "page.down");
         bind(Key.A, "a");
+        bind(Key.B, "b");
         bind(Key.C, "c");
         bind(Key.N, "n");
         bind(Key.V, "v");

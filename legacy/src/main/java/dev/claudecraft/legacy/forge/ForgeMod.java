@@ -15,7 +15,7 @@ import net.minecraftforge.fml.common.FMLCommonHandler;
 
 import java.io.File;
 
-@Mod(modid = LegacyClient.MOD_ID, name = "ClaudeCraft", version = "0.1.0", clientSideOnly = true, acceptedMinecraftVersions = "*")
+@Mod(modid = LegacyClient.MOD_ID, name = "ClaudeCraft", version = "0.2.0", clientSideOnly = true, acceptedMinecraftVersions = "*")
 public final class ForgeMod {
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {

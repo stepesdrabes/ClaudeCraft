@@ -1,5 +1,7 @@
 package dev.claudecraft.core.view;
 
+import dev.claudecraft.agent.Task;
+import dev.claudecraft.agent.json.Json;
 import dev.claudecraft.core.chat.Chat;
 import dev.claudecraft.core.chat.Entry;
 import dev.claudecraft.core.chat.MessageEntry;
@@ -8,8 +10,10 @@ import dev.claudecraft.core.chat.Status;
 import dev.claudecraft.core.chat.ToolEntry;
 import dev.claudecraft.core.chat.Transcript;
 import dev.claudecraft.core.ui.Canvas;
+import dev.claudecraft.core.ui.Image;
 import dev.claudecraft.core.ui.Line;
 import dev.claudecraft.core.ui.Markdown;
+import dev.claudecraft.core.ui.Picture;
 import dev.claudecraft.core.ui.Rect;
 import dev.claudecraft.core.ui.Span;
 import dev.claudecraft.core.ui.TextWrap;
@@ -28,6 +32,9 @@ final class TranscriptView {
     private static final int OUTPUT_INDENT = 14;
     private static final int OUTPUT_LINES = 12;
     private static final int SCROLL_LINES = 3;
+    private static final int THUMBNAIL_HEIGHT = 56;
+    private static final int THUMBNAIL_MAX_WIDTH = 150;
+    private static final int PLAN_COLOR = 0xFF5EEAD4;
     private static final Line YOU = label("You", Theme.USER);
     private static final Line CLAUDE = label("Claude", Theme.CLAUDE);
     private static final String[] LOGO = {
@@ -40,10 +47,24 @@ final class TranscriptView {
     private static final class Row {
         final Line line;
         final ToolEntry tool;
+        final List<Picture> pictures;
+        final int indent;
+        final int height;
 
-        Row(Line line, ToolEntry tool) {
+        Row(Line line, ToolEntry tool, int height) {
             this.line = line;
             this.tool = tool;
+            this.pictures = null;
+            this.indent = 0;
+            this.height = height;
+        }
+
+        Row(List<Picture> pictures, int indent) {
+            this.line = null;
+            this.tool = null;
+            this.pictures = pictures;
+            this.indent = indent;
+            this.height = THUMBNAIL_HEIGHT + 4;
         }
     }
 
@@ -61,13 +82,15 @@ final class TranscriptView {
 
     private final Map<Entry, Block> cache = new IdentityHashMap<>();
     private final Consumer<String> onPrompt;
+    private final Consumer<Picture> onPicture;
     private Transcript cachedFor;
     private int scrollFromBottom;
     private int lastHeight;
     private Rect area = new Rect(0, 0, 0, 0);
 
-    TranscriptView(Consumer<String> onPrompt) {
+    TranscriptView(Consumer<String> onPrompt, Consumer<Picture> onPicture) {
         this.onPrompt = onPrompt;
+        this.onPicture = onPicture;
     }
 
     void render(Canvas canvas, Rect area, Chat chat, boolean gameWorkspace, Clicks clicks, double mouseX, double mouseY, long now) {
@@ -75,55 +98,68 @@ final class TranscriptView {
         if (chat.transcript() != cachedFor) {
             cache.clear();
             cachedFor = chat.transcript();
-            scrollFromBottom = lastHeight = 0;
         }
         if (chat.transcript().isEmpty()) {
             if (chat.historyLoaded()) renderEmpty(canvas, area, gameWorkspace, clicks, mouseX, mouseY);
             else centered(canvas, area, "Loading…", Theme.MUTED);
             return;
         }
-        List<Row> rows = rows(canvas, chat, area.width - 4, now);
-        int rowHeight = canvas.lineHeight() + 1;
-        int height = rows.size() * rowHeight;
+        int width = area.width - 4;
+        List<Row> rows = rows(canvas, chat, width, now);
+        int height = 0;
+        for (Row row : rows) height += row.height;
         if (scrollFromBottom > 0 && lastHeight > 0) scrollFromBottom += height - lastHeight;
         scrollFromBottom = Math.max(0, Math.min(scrollFromBottom, height - area.height));
         lastHeight = height;
-        int top = Math.min(area.y, area.bottom() - height) + scrollFromBottom;
+        int y = Math.min(area.y, area.bottom() - height) + scrollFromBottom;
         canvas.pushClip(area.x, area.y, area.right(), area.bottom());
-        for (int i = 0; i < rows.size(); i++) {
-            int y = top + i * rowHeight;
-            if (y + rowHeight < area.y || y > area.bottom()) continue;
-            Row row = rows.get(i);
-            if (row.tool != null) renderToolRow(canvas, row, new Rect(area.x, y - 1, area.width - 4, rowHeight), clicks, mouseX, mouseY, now);
-            row.line.draw(canvas, area.x, y, area.width - 4);
+        for (Row row : rows) {
+            if (y + row.height >= area.y && y <= area.bottom()) {
+                if (row.pictures != null) renderPictures(canvas, row, area.x + row.indent, y + 1, clicks, mouseX, mouseY);
+                else {
+                    if (row.tool != null) renderToolRow(canvas, row, new Rect(area.x, y - 1, width, row.height), clicks, mouseX, mouseY, now);
+                    row.line.draw(canvas, area.x, y, width);
+                }
+            }
+            y += row.height;
         }
         canvas.popClip();
         renderScrollbar(canvas, height);
     }
 
+    void reset() {
+        scrollFromBottom = lastHeight = 0;
+    }
+
     private List<Row> rows(Canvas canvas, Chat chat, int width, long now) {
+        int lineHeight = canvas.lineHeight() + 1;
         List<Row> rows = new ArrayList<>();
         Entry previous = null;
         for (Entry entry : chat.transcript().entries()) {
-            boolean user = entry instanceof MessageEntry && ((MessageEntry) entry).role() == MessageEntry.Role.USER;
+            boolean user = isUser(entry);
             boolean startsTurn = previous == null || isUser(previous);
             if (user) {
-                if (previous != null) rows.add(new Row(Line.BLANK, null));
-                rows.add(new Row(YOU, null));
+                if (previous != null) rows.add(new Row(Line.BLANK, null, lineHeight));
+                rows.add(new Row(YOU, null, lineHeight));
             } else if (startsTurn && !(entry instanceof NoticeEntry)) {
-                if (previous != null) rows.add(new Row(Line.BLANK, null));
-                rows.add(new Row(CLAUDE, null));
+                if (previous != null) rows.add(new Row(Line.BLANK, null, lineHeight));
+                rows.add(new Row(CLAUDE, null, lineHeight));
             } else if (entry instanceof MessageEntry && previous instanceof ToolEntry) {
-                rows.add(new Row(Line.BLANK, null));
+                rows.add(new Row(Line.BLANK, null, lineHeight));
             }
             ToolEntry tool = entry instanceof ToolEntry ? (ToolEntry) entry : null;
-            for (Line line : lines(canvas, entry, width)) rows.add(new Row(line, tool));
+            for (Line line : lines(canvas, entry, width)) rows.add(new Row(line, tool, lineHeight));
+            if (tool != null) {
+                Line progress = progress(canvas, chat, tool, width, now);
+                if (progress != null) rows.add(new Row(progress, tool, lineHeight));
+            }
+            List<Picture> pictures = entry instanceof MessageEntry ? ((MessageEntry) entry).images() : tool != null ? tool.images() : null;
+            if (pictures != null && !pictures.isEmpty()) rows.add(new Row(pictures, tool != null ? OUTPUT_INDENT : 0));
             previous = entry;
         }
-        Status status = chat.status();
-        if (status.isActive()) {
-            rows.add(new Row(Line.BLANK, null));
-            rows.add(new Row(activity(canvas, chat, width, now), null));
+        if (chat.status().isActive()) {
+            rows.add(new Row(Line.BLANK, null, lineHeight));
+            rows.add(new Row(activity(canvas, chat, width, now), null, lineHeight));
         }
         return rows;
     }
@@ -143,7 +179,9 @@ final class TranscriptView {
             return TextWrap.wrap(canvas, Collections.singletonList(new Span(notice.text(), notice.color(), Canvas.ITALIC)), width, 0);
         }
         MessageEntry message = (MessageEntry) entry;
-        if (message.role() == MessageEntry.Role.USER) return TextWrap.wrap(canvas, message.text(), Theme.TEXT_SOFT, width);
+        if (message.role() == MessageEntry.Role.USER) {
+            return message.text().isEmpty() ? Collections.<Line>emptyList() : TextWrap.wrap(canvas, message.text(), Theme.TEXT_SOFT, width);
+        }
         return Markdown.render(canvas, message.text() + (message.streaming() ? " ▍" : ""), width, Theme.TEXT);
     }
 
@@ -152,7 +190,22 @@ final class TranscriptView {
         int labelWidth = canvas.width(tool.label(), Canvas.BOLD);
         String detail = TextWrap.ellipsize(canvas, "  " + tool.detail(), width - TOOL_INDENT - labelWidth, 0);
         lines.add(new Line(Arrays.asList(new Span(tool.label(), Theme.TEXT_SOFT, Canvas.BOLD), new Span(detail, Theme.DIM, 0)), TOOL_INDENT, 0, 0));
+        if (tool.state() == ToolEntry.State.RUNNING) {
+            for (String child : tool.children()) {
+                lines.add(new Line(Collections.singletonList(new Span(TextWrap.ellipsize(canvas, "↳ " + child, width - OUTPUT_INDENT, 0), Theme.DIM, 0)), OUTPUT_INDENT, 0, 0));
+            }
+        }
         if (!tool.expanded()) return lines;
+        if ("ExitPlanMode".equals(tool.name())) {
+            for (Line line : Markdown.render(canvas, tool.input().get("plan").asString(""), width - OUTPUT_INDENT - 4, Theme.TEXT)) {
+                lines.add(line.boxed(OUTPUT_INDENT, PLAN_COLOR));
+            }
+            return lines;
+        }
+        if ("TodoWrite".equals(tool.name())) {
+            for (Json todo : tool.input().get("todos").items()) lines.add(todoLine(canvas, todo, width));
+            return lines;
+        }
         String[] output = tool.output().isEmpty() ? new String[]{"(no output)"} : tool.output().split("\n");
         for (int i = 0; i < output.length && i < OUTPUT_LINES; i++) {
             String text = TextWrap.ellipsize(canvas, output[i].replace("\t", "    "), width - OUTPUT_INDENT - 4, 0);
@@ -163,6 +216,24 @@ final class TranscriptView {
             lines.add(new Line(Collections.singletonList(new Span(more, Theme.DIM, 0)), OUTPUT_INDENT, Theme.CODE_BACKGROUND, 0));
         }
         return lines;
+    }
+
+    private static Line todoLine(Canvas canvas, Json todo, int width) {
+        String status = todo.get("status").asString("");
+        String text = todo.get("content").asString("");
+        Span span;
+        if ("completed".equals(status)) span = new Span("✔ " + text, Theme.DIM, Canvas.STRIKETHROUGH);
+        else if ("in_progress".equals(status)) span = new Span("▶ " + text, Theme.CLAUDE, 0);
+        else span = new Span("☐ " + text, Theme.TEXT_SOFT, 0);
+        return new Line(Collections.singletonList(span.withText(TextWrap.ellipsize(canvas, span.text, width - OUTPUT_INDENT, span.style))), OUTPUT_INDENT, 0, 0);
+    }
+
+    private static Line progress(Canvas canvas, Chat chat, ToolEntry tool, int width, long now) {
+        Task task = chat.task(tool.id());
+        if (task == null) return null;
+        String text = "↳ " + SidePanel.taskDetail(task, now);
+        return new Line(Collections.singletonList(new Span(TextWrap.ellipsize(canvas, text, width - OUTPUT_INDENT, 0),
+            task.status().isActive() ? Theme.MUTED : Theme.DIM, 0)), OUTPUT_INDENT, 0, 0);
     }
 
     private void renderToolRow(Canvas canvas, Row row, Rect bounds, Clicks clicks, double mouseX, double mouseY, long now) {
@@ -178,14 +249,40 @@ final class TranscriptView {
         canvas.fill(bounds.x + 1, bounds.y + 3, bounds.x + 1 + Theme.DOT, bounds.y + 3 + Theme.DOT, color);
     }
 
+    private void renderPictures(Canvas canvas, Row row, int x, int y, Clicks clicks, double mouseX, double mouseY) {
+        for (Picture picture : row.pictures) {
+            Image image = picture.preview();
+            int width = image == null ? THUMBNAIL_HEIGHT : Math.min(THUMBNAIL_MAX_WIDTH, image.width() * THUMBNAIL_HEIGHT / Math.max(1, image.height()));
+            int height = image == null ? THUMBNAIL_HEIGHT : Math.min(THUMBNAIL_HEIGHT, image.height() * width / Math.max(1, image.width()));
+            Rect frame = new Rect(x, y + (THUMBNAIL_HEIGHT - height) / 2, width, height);
+            thumbnail(canvas, picture, frame, frame.contains(mouseX, mouseY));
+            if (image != null) clicks.add(frame, () -> onPicture.accept(picture));
+            x += width + 4;
+            if (x > area.right()) break;
+        }
+    }
+
+    static void thumbnail(Canvas canvas, Picture picture, Rect frame, boolean hovered) {
+        Image image = picture.preview();
+        canvas.outline(frame.x - 1, frame.y - 1, frame.right() + 1, frame.bottom() + 1, hovered ? Theme.WHITE : Theme.INPUT_BORDER);
+        if (image != null) {
+            canvas.image(image, frame.x, frame.y, frame.width, frame.height);
+            return;
+        }
+        frame.fill(canvas, Theme.CODE_BACKGROUND);
+        String text = picture.failed() ? "image" : "…";
+        canvas.text(text, frame.x + (frame.width - canvas.width(text)) / 2, frame.y + (frame.height - canvas.lineHeight()) / 2 + 1, Theme.DIM);
+    }
+
     private static Line activity(Canvas canvas, Chat chat, int width, long now) {
         if (chat.status() == Status.NEEDS_YOU) {
-            return new Line(Collections.singletonList(new Span("■ Waiting for you", Theme.NEEDS_YOU, 0)), 0, 0, 0);
+            String text = chat.inBackground() ? "■ Waiting for you in the background" : "■ Waiting for you";
+            return new Line(Collections.singletonList(new Span(text, Theme.NEEDS_YOU, 0)), 0, 0, 0);
         }
         String spinner = "✻ ";
-        String elapsed = " " + Format.elapsed(now - chat.turnStartedAt());
+        String elapsed = chat.inBackground() ? "" : " " + Format.elapsed(now - chat.turnStartedAt());
         String thought = chat.thought();
-        String step = thought != null ? thought : chat.step() != null ? chat.step() : "Working";
+        String step = chat.inBackground() ? "Working in the background" : thought != null ? thought : chat.step() != null ? chat.step() : "Working";
         int style = thought != null ? Canvas.ITALIC : 0;
         int available = width - canvas.width(spinner) - canvas.width(elapsed);
         return new Line(Arrays.asList(

@@ -81,13 +81,17 @@ final class CliProcess {
     void close() {
         try {
             stdin.close();
-            if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroy();
         } catch (IOException e) {
             process.destroy();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            process.destroy();
+            return;
         }
+        daemon("claudecraft-cli-close", () -> {
+            try {
+                if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroy();
+            } catch (InterruptedException e) {
+                process.destroy();
+            }
+        });
     }
 
     private void readStdout() {

@@ -11,7 +11,11 @@ public final class SessionSpec {
     private final Path workspace;
     private String resumeId;
     private String model;
+    private String effort;
     private String permissionMode;
+    private boolean fork;
+    private String worktree;
+    private String toolsUrl;
     private String title;
     private String instructions;
     private String toolNamespace = "tools";
@@ -29,6 +33,26 @@ public final class SessionSpec {
 
     public SessionSpec model(String model) {
         this.model = model;
+        return this;
+    }
+
+    public SessionSpec effort(String effort) {
+        this.effort = effort;
+        return this;
+    }
+
+    public SessionSpec fork(boolean fork) {
+        this.fork = fork;
+        return this;
+    }
+
+    public SessionSpec worktree(String name) {
+        this.worktree = name;
+        return this;
+    }
+
+    public SessionSpec toolsUrl(String url) {
+        this.toolsUrl = url;
         return this;
     }
 
@@ -68,6 +92,22 @@ public final class SessionSpec {
 
     public String model() {
         return model;
+    }
+
+    public String effort() {
+        return effort;
+    }
+
+    public boolean fork() {
+        return fork;
+    }
+
+    public String worktree() {
+        return worktree;
+    }
+
+    public String toolsUrl() {
+        return toolsUrl;
     }
 
     public String permissionMode() {

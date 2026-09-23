@@ -21,6 +21,13 @@ final class Format {
         return minutes / (60 * 24) + "d ago";
     }
 
+    static String until(long timestamp, long now) {
+        long minutes = Math.max(0, (timestamp - now) / 60_000);
+        if (minutes < 60) return minutes + "m";
+        if (minutes < 60 * 24) return minutes / 60 + "h " + minutes % 60 + "m";
+        return minutes / (60 * 24) + "d " + minutes % (60 * 24) / 60 + "h";
+    }
+
     static String folder(Path path) {
         Path name = path.getFileName();
         return name != null ? name.toString() : path.toString();

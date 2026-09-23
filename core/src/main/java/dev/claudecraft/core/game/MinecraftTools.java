@@ -5,12 +5,20 @@ import dev.claudecraft.agent.tool.Schema;
 import dev.claudecraft.agent.tool.Tool;
 import dev.claudecraft.agent.tool.ToolResult;
 
+import dev.claudecraft.core.ui.Image;
+import dev.claudecraft.core.ui.Images;
+
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 public final class MinecraftTools {
@@ -18,13 +26,21 @@ public final class MinecraftTools {
     private static final int MAX_SCAN_VOLUME = 32 * 32 * 32;
     private static final int MAX_LAYERED_VOLUME = 16 * 16 * 16;
     private static final String PALETTE = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    private static final int SCREENSHOT_SIZE = 1568;
+    private static final ScheduledExecutorService TIMEOUTS = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "claudecraft-timeouts");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private final Game game;
     private final Executor mainThread;
+    private final Consumer<Consumer<Image>> capture;
 
-    public MinecraftTools(Game game, Executor mainThread) {
+    public MinecraftTools(Game game, Executor mainThread, Consumer<Consumer<Image>> capture) {
         this.game = game;
         this.mainThread = mainThread;
+        this.capture = capture;
     }
 
     public List<Tool> all() {
@@ -51,6 +67,11 @@ public final class MinecraftTools {
                 "List entities around the player: type, name, position and distance.",
                 Schema.object().optional("radius", "number", "Search radius in blocks, 1-64 (default 16)"),
                 args -> onMain(() -> ToolResult.text(game.entities(clamp(args.get("radius").asDouble(16), 1, 64)).toString()))),
+            Tool.of("screenshot",
+                "See what the player sees right now: a screenshot of the game view without the ClaudeCraft panel. "
+                    + "Use it to check how a build looks.",
+                Schema.object(),
+                args -> screenshot()),
             Tool.of("say",
                 "Show a message in the player's chat. Only the player sees it. Use it to announce when a long task is done.",
                 Schema.object().required("message", "string", "The message to show"),
@@ -58,6 +79,26 @@ public final class MinecraftTools {
                     game.message(args.get("message").asString(""), false);
                     return ToolResult.text("Shown to the player.");
                 })));
+    }
+
+    private CompletableFuture<ToolResult> screenshot() {
+        CompletableFuture<ToolResult> result = new CompletableFuture<>();
+        mainThread.execute(() -> {
+            if (!game.inWorld()) {
+                result.complete(ToolResult.error("The player is not in a world right now."));
+                return;
+            }
+            capture.accept(image -> {
+                try {
+                    result.complete(ToolResult.image(Images.jpeg(Images.fit(image, SCREENSHOT_SIZE)), "image/jpeg",
+                        "The player's view (" + image.width() + "x" + image.height() + ")"));
+                } catch (IOException e) {
+                    result.complete(ToolResult.error("Could not encode the screenshot: " + e.getMessage()));
+                }
+            });
+        });
+        TIMEOUTS.schedule(() -> result.complete(ToolResult.error("Minecraft is not rendering right now (is the window minimized?)")), 10, TimeUnit.SECONDS);
+        return result;
     }
 
     private CompletableFuture<ToolResult> runCommand(Json args) {

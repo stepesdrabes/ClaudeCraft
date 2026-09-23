@@ -1,10 +1,12 @@
 package dev.claudecraft.agent;
 
+import java.util.List;
+
 public interface SessionListener {
-    default void onStarted(String sessionId, String model) {
+    default void onStarted(String sessionId, String model, String cwd) {
     }
 
-    default void onUserMessage(String text) {
+    default void onUserMessage(String text, List<ImageData> images) {
     }
 
     default void onText(String text) {
@@ -19,7 +21,13 @@ public interface SessionListener {
     default void onToolUse(ToolUse use) {
     }
 
-    default void onToolResult(String toolUseId, String output, boolean error) {
+    default void onToolResult(ToolOutput output) {
+    }
+
+    default void onSubagentToolUse(String parentToolUseId, ToolUse use) {
+    }
+
+    default void onTask(Task task) {
     }
 
     default void onPermissionRequest(PermissionRequest request) {
@@ -32,6 +40,21 @@ public interface SessionListener {
     }
 
     default void onStatus(String status) {
+    }
+
+    default void onPermissionMode(String mode) {
+    }
+
+    default void onBusy(boolean busy) {
+    }
+
+    default void onCompacted(long tokensBefore, long tokensAfter) {
+    }
+
+    default void onNotice(String text) {
+    }
+
+    default void onPlanUsage(Usage.Plan usage) {
     }
 
     default void onTurnEnd(TurnResult result) {

@@ -18,6 +18,10 @@ abstract class PendingRequest {
         return id;
     }
 
+    public String toolUseId() {
+        return request.get("tool_use_id").asString("");
+    }
+
     Json request() {
         return request;
     }

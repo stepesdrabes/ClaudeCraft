@@ -1,12 +1,13 @@
 package dev.claudecraft.platform;
 
 import dev.claudecraft.core.ui.Canvas;
+import dev.claudecraft.core.ui.Image;
 import net.minecraft.client.gui.Font;
+import net.minecraft.resources.Identifier;
 //? if >=1.20 {
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 //?} else {
 /*import com.mojang.blaze3d.platform.Window;
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiComponent;
@@ -14,6 +15,12 @@ import net.minecraft.client.gui.GuiComponent;
 import java.util.ArrayDeque;
 import java.util.Deque;
 *///?}
+//? if <1.21.2
+//import com.mojang.blaze3d.systems.RenderSystem;
+//? if >=1.21.2 && <1.21.6
+//import net.minecraft.client.renderer.RenderType;
+//? if >=1.17 && <1.20
+//import net.minecraft.client.renderer.GameRenderer;
 
 final class GuiCanvas implements Canvas {
     //? if >=1.20 {
@@ -60,6 +67,35 @@ final class GuiCanvas implements Canvas {
         *///?} else {
         /*if (shadow) font.drawShadow(graphics, Text.literal(text, style), x, y, argb);
         else font.draw(graphics, Text.literal(text, style), x, y, argb);
+        *///?}
+    }
+
+    @Override
+    public void image(Image image, int x, int y, int width, int height, int u, int v, int regionWidth, int regionHeight) {
+        Identifier id = Textures.get(image);
+        //? if >=1.21.6 {
+        graphics.blit(id, x, y, x + width, y + height, u / (float) image.width(), (u + regionWidth) / (float) image.width(),
+            v / (float) image.height(), (v + regionHeight) / (float) image.height());
+        //?} elif >=1.21.2 {
+        /*graphics.blit(RenderType::guiTextured, id, x, y, u, v, width, height, regionWidth, regionHeight, image.width(), image.height());
+        *///?} elif >=1.20 {
+        /*RenderSystem.enableBlend();
+        graphics.blit(id, x, y, width, height, u, v, regionWidth, regionHeight, image.width(), image.height());
+        RenderSystem.disableBlend();
+        *///?} elif >=1.17 {
+        /*RenderSystem.setShaderTexture(0, id);
+        RenderSystem.setShader(GameRenderer::getPositionTexShader);
+        RenderSystem.setShaderColor(1, 1, 1, 1);
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        GuiComponent.blit(graphics, x, y, width, height, u, v, regionWidth, regionHeight, image.width(), image.height());
+        RenderSystem.disableBlend();
+        *///?} else {
+        /*Minecraft.getInstance().getTextureManager().bind(id);
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        GuiComponent.blit(graphics, x, y, width, height, u, v, regionWidth, regionHeight, image.width(), image.height());
+        RenderSystem.disableBlend();
         *///?}
     }
 

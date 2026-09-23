@@ -45,7 +45,7 @@ public final class TextWrap {
         int available = maxWidth - canvas.width(ellipsis, style);
         int end = text.length();
         while (end > 0 && canvas.width(text.substring(0, end), style) > available) end--;
-        return text.substring(0, end).trim() + ellipsis;
+        return text.substring(0, end).replaceFirst("\\s+$", "") + ellipsis;
     }
 
     private void add(Span span) {

@@ -1,13 +1,17 @@
 package dev.claudecraft.agent.claude;
 
+import dev.claudecraft.agent.Installation;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +20,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 final class ClaudeCli {
@@ -25,9 +31,12 @@ final class ClaudeCli {
         "~/.local/bin", "~/.claude/local", "/opt/homebrew/bin", "/usr/local/bin",
         "~/.npm-global/bin", "~/.bun/bin", "~/.volta/bin", "~/AppData/Roaming/npm");
     private static final String MARKER = "__CLAUDECRAFT_PATH__";
+    private static final Pattern VERSION = Pattern.compile("(\\d+\\.\\d+\\.\\d+)");
+    private static volatile String searchPath;
 
     private final String executable;
     private final Map<String, String> environment;
+    private volatile String version;
 
     private ClaudeCli(String executable, Map<String, String> environment) {
         this.executable = executable;
@@ -35,16 +44,30 @@ final class ClaudeCli {
     }
 
     static ClaudeCli locate(String configuredPath) {
-        Map<String, String> environment = new HashMap<>(System.getenv());
-        String path = searchPath(environment.get("PATH"));
-        environment.put("PATH", path);
+        Map<String, String> environment = environmentWithPath();
+        String path = environment.get("PATH");
         String executable = configuredPath != null && !configuredPath.trim().isEmpty()
             ? expandHome(configuredPath.trim())
-            : find(path);
+            : candidates(path).stream().findFirst().orElse(null);
         if (executable == null || !new File(executable).canExecute()) {
-            throw new IllegalStateException("Claude Code not found. Install it from claude.com/code or set claudePath in config/claudecraft.json");
+            throw new IllegalStateException("Claude Code not found. Install it from claude.com/code or pick it in the model menu");
         }
         return new ClaudeCli(executable, environment);
+    }
+
+    static List<Installation> installations() {
+        Map<String, String> byRealPath = new LinkedHashMap<>();
+        for (String candidate : candidates(searchPath())) {
+            try {
+                byRealPath.putIfAbsent(new File(candidate).getCanonicalPath(), candidate);
+            } catch (IOException ignored) {
+            }
+        }
+        List<CompletableFuture<Installation>> probes = new ArrayList<>();
+        for (String path : byRealPath.values()) {
+            probes.add(CompletableFuture.supplyAsync(() -> new Installation(path, versionOf(path, environmentWithPath()))));
+        }
+        return probes.stream().map(CompletableFuture::join).filter(i -> i.version() != null).collect(Collectors.toList());
     }
 
     List<String> command(List<String> args) {
@@ -59,22 +82,79 @@ final class ClaudeCli {
         return environment;
     }
 
-    private static String find(String path) {
+    String executable() {
+        return executable;
+    }
+
+    String version() {
+        if (version == null) version = versionOf(executable, environment);
+        return version;
+    }
+
+    String run(List<String> args, int timeoutSeconds) throws IOException {
+        return run(args, null, timeoutSeconds);
+    }
+
+    String run(List<String> args, Path directory, int timeoutSeconds) throws IOException {
+        ProcessBuilder builder = new ProcessBuilder(command(args)).redirectErrorStream(true);
+        if (directory != null) builder.directory(directory.toFile());
+        builder.environment().clear();
+        builder.environment().putAll(environment);
+        Process process = builder.start();
+        process.getOutputStream().close();
+        CompletableFuture<String> output = CompletableFuture.supplyAsync(() -> readAll(process));
+        try {
+            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new IOException("Claude Code did not answer in time");
+            }
+            String text = output.get(2, TimeUnit.SECONDS);
+            if (process.exitValue() != 0) throw new IOException(text.trim().isEmpty() ? "exit code " + process.exitValue() : text.trim());
+            return text;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted", e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
+    private static String versionOf(String executable, Map<String, String> environment) {
+        try {
+            String output = new ClaudeCli(executable, environment).run(Arrays.asList("--version"), 10);
+            Matcher matcher = VERSION.matcher(output);
+            return matcher.find() ? matcher.group(1) : null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static Map<String, String> environmentWithPath() {
+        Map<String, String> environment = new HashMap<>(System.getenv());
+        environment.put("PATH", searchPath());
+        return environment;
+    }
+
+    private static List<String> candidates(String path) {
+        List<String> found = new ArrayList<>();
         for (String dir : path.split(File.pathSeparator)) {
             for (String name : NAMES) {
                 File candidate = new File(dir, name);
-                if (candidate.isFile() && candidate.canExecute()) return candidate.getAbsolutePath();
+                if (candidate.isFile() && candidate.canExecute()) found.add(candidate.getAbsolutePath());
             }
         }
-        return null;
+        return found;
     }
 
-    private static String searchPath(String inherited) {
-        Set<String> dirs = new LinkedHashSet<>();
-        addAll(dirs, loginShellPath());
-        addAll(dirs, inherited);
-        for (String dir : COMMON_DIRS) dirs.add(expandHome(dir));
-        return dirs.stream().filter(dir -> !dir.isEmpty()).collect(Collectors.joining(File.pathSeparator));
+    private static String searchPath() {
+        if (searchPath == null) {
+            Set<String> dirs = new LinkedHashSet<>();
+            addAll(dirs, loginShellPath());
+            addAll(dirs, System.getenv("PATH"));
+            for (String dir : COMMON_DIRS) dirs.add(expandHome(dir));
+            searchPath = dirs.stream().filter(dir -> !dir.isEmpty()).collect(Collectors.joining(File.pathSeparator));
+        }
+        return searchPath;
     }
 
     private static void addAll(Set<String> dirs, String path) {
@@ -114,7 +194,7 @@ final class ClaudeCli {
         }
     }
 
-    private static String expandHome(String path) {
+    static String expandHome(String path) {
         return path.startsWith("~") ? System.getProperty("user.home") + path.substring(1) : path;
     }
 }

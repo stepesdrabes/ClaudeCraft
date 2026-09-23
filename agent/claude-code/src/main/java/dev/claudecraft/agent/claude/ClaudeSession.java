@@ -1,10 +1,15 @@
 package dev.claudecraft.agent.claude;
 
+import dev.claudecraft.agent.ImageData;
+import dev.claudecraft.agent.McpServerInfo;
 import dev.claudecraft.agent.Session;
 import dev.claudecraft.agent.SessionListener;
 import dev.claudecraft.agent.SessionSpec;
+import dev.claudecraft.agent.Task;
+import dev.claudecraft.agent.ToolOutput;
 import dev.claudecraft.agent.ToolUse;
 import dev.claudecraft.agent.TurnResult;
+import dev.claudecraft.agent.Usage;
 import dev.claudecraft.agent.json.Json;
 import dev.claudecraft.agent.mcp.McpServer;
 
@@ -24,6 +29,7 @@ final class ClaudeSession implements Session, CliProcess.Handler {
     private final SessionListener listener;
     private final McpServer tools;
     private final Map<String, PendingRequest> prompts = new ConcurrentHashMap<>();
+    private final Tasks tasks = new Tasks();
     private volatile CliProcess process;
     private volatile boolean closing;
     private CompletableFuture<Json> initialization;
@@ -54,14 +60,15 @@ final class ClaudeSession implements Session, CliProcess.Handler {
         return initialization;
     }
 
-    private static List<String> arguments(SessionSpec spec) {
+    CompletableFuture<Json> request(Json request) {
+        return initialization.thenCompose(ignored -> process.request(request));
+    }
+
+    static List<String> arguments(SessionSpec spec) {
         List<String> args = new ArrayList<>(Arrays.asList(
             "-p", "--input-format=stream-json", "--output-format=stream-json", "--verbose",
             "--include-partial-messages", "--thinking-display=summarized", "--permission-prompt-tool=stdio"));
-        if (spec.resumeId() != null) args.add("--resume=" + spec.resumeId());
-        if (spec.model() != null) args.add("--model=" + spec.model());
-        if (spec.permissionMode() != null) args.add("--permission-mode=" + spec.permissionMode());
-        if (spec.instructions() != null) args.add("--append-system-prompt=" + spec.instructions());
+        args.addAll(options(spec));
         if (!spec.tools().isEmpty()) {
             String namespace = spec.toolNamespace();
             Json server = Json.object().put("type", "sdk").put("name", namespace).put("alwaysLoad", true);
@@ -71,13 +78,21 @@ final class ClaudeSession implements Session, CliProcess.Handler {
         return args;
     }
 
+    static List<String> options(SessionSpec spec) {
+        List<String> args = new ArrayList<>();
+        if (spec.resumeId() != null) args.add("--resume=" + spec.resumeId());
+        if (spec.resumeId() != null && spec.fork()) args.add("--fork-session");
+        if (spec.worktree() != null) args.add(spec.worktree().isEmpty() ? "--worktree" : "--worktree=" + spec.worktree());
+        if (spec.model() != null) args.add("--model=" + spec.model());
+        if (spec.effort() != null) args.add("--effort=" + spec.effort());
+        if (spec.permissionMode() != null) args.add("--permission-mode=" + spec.permissionMode());
+        if (spec.instructions() != null) args.add("--append-system-prompt=" + spec.instructions());
+        return args;
+    }
+
     @Override
-    public synchronized void send(String text) {
-        Json message = Json.object()
-            .put("type", "user")
-            .put("session_id", "")
-            .put("parent_tool_use_id", null)
-            .put("message", Json.object().put("role", "user").put("content", text));
+    public synchronized void send(String text, List<ImageData> images) {
+        Json message = Protocol.userMessage(text, images);
         outbox = outbox.handle((ignored, failure) -> null).thenRun(() -> process.send(message));
     }
 
@@ -92,6 +107,11 @@ final class ClaudeSession implements Session, CliProcess.Handler {
     }
 
     @Override
+    public void setEffort(String level) {
+        control(Json.object().put("subtype", "apply_flag_settings").put("settings", Json.object().put("effortLevel", level)));
+    }
+
+    @Override
     public void setPermissionMode(String modeId) {
         control(Json.object().put("subtype", "set_permission_mode").put("mode", modeId));
     }
@@ -99,6 +119,36 @@ final class ClaudeSession implements Session, CliProcess.Handler {
     @Override
     public void rename(String title) {
         control(Json.object().put("subtype", "rename_session").put("title", title));
+    }
+
+    @Override
+    public void stopTask(String taskId) {
+        control(Json.object().put("subtype", "stop_task").put("task_id", taskId));
+    }
+
+    @Override
+    public void backgroundTasks() {
+        control(Json.object().put("subtype", "background_tasks"));
+    }
+
+    @Override
+    public CompletableFuture<Usage.Context> contextUsage() {
+        return request(Json.object().put("subtype", "get_context_usage").put("detail", "summary")).thenApply(Protocol::contextUsage);
+    }
+
+    @Override
+    public CompletableFuture<List<McpServerInfo>> mcpServers() {
+        return request(Json.object().put("subtype", "mcp_status")).thenApply(Protocol::mcpServers);
+    }
+
+    @Override
+    public void setMcpServerEnabled(String name, boolean enabled) {
+        control(Json.object().put("subtype", "mcp_toggle").put("serverName", name).put("enabled", enabled));
+    }
+
+    @Override
+    public void reconnectMcpServer(String name) {
+        control(Json.object().put("subtype", "mcp_reconnect").put("serverName", name));
     }
 
     @Override
@@ -113,22 +163,36 @@ final class ClaudeSession implements Session, CliProcess.Handler {
     }
 
     private void control(Json request) {
-        process.request(request).exceptionally(failure -> {
-            emit(l -> l.onError(failure.getMessage()));
+        request(request).exceptionally(failure -> {
+            emit(l -> l.onError(rootMessage(failure)));
             return null;
         });
     }
 
     @Override
     public void onMessage(Json message) {
-        if (!message.get("parent_tool_use_id").isNull()) return;
+        String parent = message.get("parent_tool_use_id").asString();
+        if (parent != null) {
+            onSubagentMessage(parent, message);
+            return;
+        }
         switch (message.get("type").asString("")) {
             case "system": onSystem(message); break;
             case "stream_event": onStreamEvent(message.get("event")); break;
             case "assistant": onAssistant(message.get("message")); break;
-            case "user": onToolResults(message.get("message").get("content")); break;
+            case "user": onToolResults(message.get("message").get("content"), message.get("tool_use_result")); break;
+            case "rate_limit_event": onRateLimits(message.get("rate_limit_info")); break;
             case "result": onResult(message); break;
             default: break;
+        }
+    }
+
+    private void onSubagentMessage(String parent, Json message) {
+        if (!"assistant".equals(message.get("type").asString())) return;
+        for (Json block : message.get("message").get("content").items()) {
+            if (!"tool_use".equals(block.get("type").asString())) continue;
+            ToolUse use = new ToolUse(block.get("id").asString(""), block.get("name").asString(""), block.get("input"));
+            emit(l -> l.onSubagentToolUse(parent, use));
         }
     }
 
@@ -137,11 +201,11 @@ final class ClaudeSession implements Session, CliProcess.Handler {
             case "init":
                 String sessionId = message.get("session_id").asString();
                 String model = message.get("model").asString();
-                emit(l -> l.onStarted(sessionId, model));
+                String cwd = message.get("cwd").asString();
+                emit(l -> l.onStarted(sessionId, model, cwd));
                 break;
             case "status":
-                String status = message.get("status").asString();
-                emit(l -> l.onStatus(status));
+                onStatusMessage(message);
                 break;
             case "api_retry":
                 emit(l -> l.onStatus("retrying"));
@@ -153,9 +217,44 @@ final class ClaudeSession implements Session, CliProcess.Handler {
                 String output = message.get("content").asString("");
                 emit(l -> l.onText(output));
                 break;
+            case "informational":
+                String level = message.get("level").asString("info");
+                String content = message.get("content").asString("");
+                if (!"info".equals(level) && !content.trim().isEmpty()) emit(l -> l.onNotice(content));
+                break;
+            case "compact_boundary":
+                Json metadata = message.get("compact_metadata");
+                long before = metadata.get("pre_tokens").asLong(0);
+                long after = metadata.get("post_tokens").asLong(0);
+                emit(l -> l.onCompacted(before, after));
+                break;
+            case "session_state_changed":
+                boolean busy = !"idle".equals(message.get("state").asString("idle"));
+                emit(l -> l.onBusy(busy));
+                break;
+            case "task_started": case "task_progress": case "task_updated": case "task_notification":
+                Task task = tasks.update(message);
+                if (task != null) emit(l -> l.onTask(task));
+                break;
             default:
                 break;
         }
+    }
+
+    private void onStatusMessage(Json message) {
+        String status = message.get("status").asString();
+        emit(l -> l.onStatus(status));
+        String mode = message.get("permissionMode").asString();
+        if (mode != null) emit(l -> l.onPermissionMode(mode));
+        if ("failed".equals(message.get("compact_result").asString())) {
+            String error = message.get("compact_error").asString("Compacting failed");
+            emit(l -> l.onNotice(error));
+        }
+    }
+
+    private void onRateLimits(Json info) {
+        Usage.Plan plan = Protocol.rateLimits(info);
+        if (plan != null) emit(l -> l.onPlanUsage(plan));
     }
 
     private void onStreamEvent(Json event) {
@@ -193,13 +292,11 @@ final class ClaudeSession implements Session, CliProcess.Handler {
         }
     }
 
-    private void onToolResults(Json content) {
+    private void onToolResults(Json content, Json details) {
         for (Json block : content.items()) {
             if (!"tool_result".equals(block.get("type").asString())) continue;
-            String id = block.get("tool_use_id").asString("");
-            String output = Transcripts.text(block.get("content"));
-            boolean error = block.get("is_error").asBoolean(false);
-            emit(l -> l.onToolResult(id, output, error));
+            ToolOutput output = Protocol.toolOutput(block, details);
+            emit(l -> l.onToolResult(output));
         }
     }
 
@@ -270,5 +367,11 @@ final class ClaudeSession implements Session, CliProcess.Handler {
 
     private void emit(Consumer<SessionListener> event) {
         spec.callbacks().execute(() -> event.accept(listener));
+    }
+
+    static String rootMessage(Throwable failure) {
+        Throwable cause = failure;
+        while (cause.getCause() != null) cause = cause.getCause();
+        return cause.getMessage() != null ? cause.getMessage() : cause.toString();
     }
 }

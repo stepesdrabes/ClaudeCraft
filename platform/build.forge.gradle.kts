@@ -21,6 +21,7 @@ base.archivesName = "$modId-forge"
 
 sourceSets.main {
     java.srcDirs(rootProject.files("agent/api/src/main/java", "agent/mcp/src/main/java", "agent/claude-code/src/main/java", "core/src/main/java"))
+    resources.srcDirs(rootProject.files("core/src/main/resources"))
 }
 
 legacyForge {

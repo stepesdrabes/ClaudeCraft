@@ -1,12 +1,14 @@
 package dev.claudecraft.core;
 
 import dev.claudecraft.core.game.Game;
+import dev.claudecraft.core.ui.Image;
 import dev.claudecraft.core.ui.TextField;
 import dev.claudecraft.core.ui.TextMetrics;
 import dev.claudecraft.core.view.Panel;
 
 import java.nio.file.Path;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 public interface Platform {
     enum Sound { DONE, NEEDS_YOU, FAILED }
@@ -34,4 +36,6 @@ public interface Platform {
     void closePanel();
 
     void playSound(Sound sound);
+
+    void screenshot(Consumer<Image> done);
 }

@@ -6,12 +6,17 @@ Inspired by [t3craft](https://github.com/maxwellyoung/t3craft), but talks to Cla
 
 ## Features
 
-- Minecraft-styled panel with threads, streaming Markdown replies, tool calls, and a live status line
-- Threads are real Claude Code sessions (resume them in the terminal too), grouped by project folder
-- Model picker, permission modes (Shift+Tab), `/` command suggestions, prompt history
-- In-game approvals (Y/A/N) and answers to Claude's questions (1–9)
+- Minecraft-styled panel that fills the screen: threads on the left, the conversation in the middle, and a side panel with context usage, todos, agents and background tasks, and MCP servers (folded into header chips on small screens)
+- Threads are real Claude Code sessions (resume them in the terminal too), grouped by project folder, including worktree sessions
+- Streaming Markdown replies with real emoji (Twemoji), tool calls, subagent progress, plan cards, todo checklists and image thumbnails
+- Image input: paste an image from the clipboard or attach a screenshot of your view
+- Model picker with an effort selector, unavailable models with an update hint, the Claude Code version, a binary chooser and a one-click update
+- Permission modes (Shift+Tab), plan approval (approve, auto-accept edits or keep planning), in-game approvals and answers to Claude's questions
+- Background sessions that keep running after you quit (`claude --bg`), plus stopping and backgrounding running tasks
+- Thread actions: rename, fork, archive, delete (to the Trash), continue in the background or bring back into the game
+- Context and plan-usage meters, MCP server status with on/off and reconnect
 - HUD pill, toasts and note-block pings when Claude finishes or needs you
-- Minecraft tools for Claude: `status`, `run_command`, `read_blocks`, `nearby_entities`, `say`
+- Minecraft tools for Claude: `status`, `run_command`, `read_blocks`, `nearby_entities`, `screenshot`, `say`
 - Local MCP server so Claude Desktop or a terminal Claude Code session can drive the game too
 
 ## Requirements
@@ -26,14 +31,34 @@ Inspired by [t3craft](https://github.com/maxwellyoung/t3craft), but talks to Cla
 | `` ` `` | Open or close the panel (rebind under Controls → ClaudeCraft) |
 | Enter | Send and return to the game |
 | Shift+Enter | Send and keep the panel open |
+| ⌘Enter (macOS) or Ctrl+Enter | Send as a background session |
 | Alt+Enter | New line |
 | Shift+Tab | Cycle permission mode |
-| Y / A / N | Allow / always allow / deny a pending action |
+| ⌘V or Ctrl+V | Paste text, or an image when the clipboard holds one |
+| Y / A / N | Allow / always allow / deny a pending action (for plans: approve / auto-accept edits / keep planning) |
 | 1–9 | Pick an answer to Claude's question |
+| Ctrl+B | Move running Bash commands and subagents to the background |
 | Ctrl+C (macOS) or Stop | Stop Claude |
+| Right-click a thread | Rename, fork, archive, delete, background |
 | Esc | Back to the game |
 
-Settings live in `config/claudecraft.json` (`claudePath`, `mcpServer`, `mcpPort`, `sounds`, `toasts`).
+Type anything else to decline a pending action with feedback instead.
+
+| Command | Action |
+| --- | --- |
+| `/clear` | Start a new chat |
+| `/rename <title>` | Rename this chat |
+| `/fork` | Branch this chat into a new one |
+| `/compact [instructions]` | Summarize the conversation to free context |
+| `/background <prompt>` | Run the prompt as a background session |
+| `/effort <level>` | `auto`, `low`, `medium`, `high`, `xhigh` or `max` |
+| `/screenshot` | Attach what you see in the game |
+| `/worktree` | Start a new chat in its own git worktree |
+| `/archive` | Archive this chat |
+
+Other `/` commands go to Claude Code.
+
+Settings live in `config/claudecraft.json` (`claudePath`, `model`, `effort`, `permissionMode`, `mcpServer`, `mcpPort`, `sounds`, `toasts`, `archived`). The model menu can also pick the `claude` binary.
 
 ## Connect Claude Desktop or Claude Code
 
@@ -50,11 +75,13 @@ Claude Desktop only speaks stdio, so point it at the bridge in the mod jar (`cla
   "mcpServers": {
     "minecraft": {
       "command": "java",
-      "args": ["-cp", "/path/to/claudecraft-fabric-0.1.0+26.2.jar", "dev.claudecraft.agent.mcp.McpStdioBridge"]
+      "args": ["-cp", "/path/to/claudecraft-fabric-0.2.0+26.2.jar", "dev.claudecraft.agent.mcp.McpStdioBridge"]
     }
   }
 }
 ```
+
+Background sessions started from the panel use this server too, so they can keep building while the game is open.
 
 ## Supported versions
 
@@ -73,10 +100,10 @@ Each jar also covers neighbouring patch versions (for example the 1.21.8 jar run
 agent/api          Connector-agnostic agent API: sessions, events, tools, JSON (Java 8, no dependencies)
 agent/mcp          MCP server (in-process and streamable HTTP) and a stdio bridge
 agent/claude-code  Claude Code connector (claude CLI + SDK control protocol)
-core               Minecraft-agnostic app: chats, UI toolkit, panel, HUD, Minecraft tools
+core               Minecraft-agnostic app: chats, UI toolkit, panel, HUD, emoji atlas, Minecraft tools
 platform           Stonecutter tree for 1.16.5–26.3 (Mojang names): Fabric, NeoForge, Forge
 legacy             Stonecutter tree for 1.8.9 and 1.12.2 (MCP names): Forge, Legacy Fabric
-build-logic        Shared Gradle plugins and the Prism deploy task
+build-logic        Shared Gradle plugins, the Prism deploy task and the emoji atlas generator
 ```
 
 New AI backends implement `dev.claudecraft.agent.Connector`; the UI and tools stay unchanged.
@@ -90,6 +117,12 @@ New AI backends implement `dev.claudecraft.agent.Connector`; the UI and tools st
 ./gradlew :platform:26.2-fabric:prism        # create/update a Prism Launcher instance with the mod
 ./gradlew prism                              # a representative set of modern instances
 ./gradlew -p legacy prism                    # 1.8.9 and 1.12.2 instances
+./gradlew emojiAtlas                         # regenerate the committed Twemoji atlas
+./gradlew test -Dclaudecraft.live=true       # also run the live tests against your Claude Code
 ```
 
 Requires JDK 25+ to run Gradle; toolchains for older Java versions are provisioned automatically.
+
+## Credits
+
+Emoji graphics are [Twemoji](https://github.com/jdecked/twemoji) by Twitter, Inc. and other contributors, licensed under [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/). The atlas in `core/src/main/resources/assets/claudecraft/emoji` is downscaled from Twemoji 17.0.3; its license ships next to it.

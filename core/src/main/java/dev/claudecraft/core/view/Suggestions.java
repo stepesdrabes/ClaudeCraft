@@ -19,8 +19,8 @@ final class Suggestions {
     private String query = "";
     private int selected;
 
-    void update(String input, ConnectorInfo info) {
-        String next = input.startsWith("/") && !input.contains(" ") && !input.contains("\n") && info != null ? input.substring(1).toLowerCase(Locale.ROOT) : null;
+    void update(String input, List<ConnectorInfo.Command> commands) {
+        String next = input.startsWith("/") && !input.contains(" ") && !input.contains("\n") ? input.substring(1).toLowerCase(Locale.ROOT) : null;
         if (next == null) {
             matches = Collections.emptyList();
             return;
@@ -29,10 +29,10 @@ final class Suggestions {
         query = next;
         selected = 0;
         List<ConnectorInfo.Command> found = new ArrayList<>();
-        for (ConnectorInfo.Command command : info.commands()) {
+        for (ConnectorInfo.Command command : commands) {
             if (command.name().toLowerCase(Locale.ROOT).startsWith(next)) found.add(command);
         }
-        for (ConnectorInfo.Command command : info.commands()) {
+        for (ConnectorInfo.Command command : commands) {
             if (!found.contains(command) && command.name().toLowerCase(Locale.ROOT).contains(next)) found.add(command);
         }
         matches = found.subList(0, Math.min(LIMIT, found.size()));

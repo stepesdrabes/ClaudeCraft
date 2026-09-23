@@ -7,7 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 
 public final class Config {
     private final Path file;
@@ -34,11 +36,13 @@ public final class Config {
         putIfMissing("claudePath", "");
         putIfMissing("workspace", "");
         putIfMissing("model", "");
+        putIfMissing("effort", "");
         putIfMissing("permissionMode", "default");
         putIfMissing("mcpServer", true);
         putIfMissing("mcpPort", 25595);
         putIfMissing("sounds", true);
         putIfMissing("toasts", true);
+        putIfMissing("archived", Json.array());
     }
 
     private void putIfMissing(String key, Object value) {
@@ -47,6 +51,11 @@ public final class Config {
 
     public String claudePath() {
         return values.get("claudePath").asString("");
+    }
+
+    public void setClaudePath(String path) {
+        values.put("claudePath", path);
+        save();
     }
 
     public Path workspace(Path fallback) {
@@ -60,12 +69,20 @@ public final class Config {
     }
 
     public String model() {
-        String model = values.get("model").asString("");
-        return model.isEmpty() ? null : model;
+        return optional("model");
     }
 
     public void setModel(String model) {
         values.put("model", model);
+        save();
+    }
+
+    public String effort() {
+        return optional("effort");
+    }
+
+    public void setEffort(String effort) {
+        values.put("effort", effort == null ? "" : effort);
         save();
     }
 
@@ -75,6 +92,17 @@ public final class Config {
 
     public void setPermissionMode(String mode) {
         values.put("permissionMode", mode);
+        save();
+    }
+
+    public Set<String> archived() {
+        Set<String> ids = new LinkedHashSet<>();
+        for (Json id : values.get("archived").items()) if (id.isString()) ids.add(id.asString());
+        return ids;
+    }
+
+    public void setArchived(Set<String> ids) {
+        values.put("archived", Json.of(ids));
         save();
     }
 
@@ -92,6 +120,11 @@ public final class Config {
 
     public boolean toasts() {
         return values.get("toasts").asBoolean(true);
+    }
+
+    private String optional(String key) {
+        String value = values.get(key).asString("");
+        return value.isEmpty() ? null : value;
     }
 
     private void save() {

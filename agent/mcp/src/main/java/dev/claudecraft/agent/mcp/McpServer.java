@@ -92,11 +92,11 @@ public final class McpServer {
 
     static Json toContent(ToolResult result) {
         Json content = Json.array();
-        if (result.png() != null) {
+        if (result.image() != null) {
             content.add(Json.object()
                 .put("type", "image")
-                .put("data", Base64.getEncoder().encodeToString(result.png()))
-                .put("mimeType", "image/png"));
+                .put("data", Base64.getEncoder().encodeToString(result.image()))
+                .put("mimeType", result.mediaType()));
         }
         if (result.text() != null) content.add(Json.object().put("type", "text").put("text", result.text()));
         return Json.object().put("content", content).put("isError", result.isError());

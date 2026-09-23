@@ -62,8 +62,8 @@ public final class TextField {
     public boolean keyPressed(KeyPress press) {
         boolean select = press.shift();
         switch (press.key()) {
-            case BACKSPACE: return delete(press.wordJump() ? previousWord(cursor) : cursor - 1);
-            case DELETE: return delete(press.wordJump() ? nextWord(cursor) : cursor + 1);
+            case BACKSPACE: return delete(press.wordJump() ? previousWord(cursor) : cursor > 0 ? Emoji.previous(value, cursor) : 0);
+            case DELETE: return delete(press.wordJump() ? nextWord(cursor) : cursor < value.length() ? Emoji.next(value, cursor) : cursor);
             case LEFT: return moveTo(horizontal(-1, press), select);
             case RIGHT: return moveTo(horizontal(1, press), select);
             case HOME: return moveTo(press.shortcut() ? 0 : currentLine()[0], select);
@@ -150,7 +150,8 @@ public final class TextField {
     private int horizontal(int direction, KeyPress press) {
         if (cursor != anchor && !press.shift()) return direction < 0 ? Math.min(cursor, anchor) : Math.max(cursor, anchor);
         if (press.wordJump()) return direction < 0 ? previousWord(cursor) : nextWord(cursor);
-        return Math.max(0, Math.min(value.length(), cursor + direction));
+        if (direction < 0) return cursor > 0 ? Emoji.previous(value, cursor) : 0;
+        return cursor < value.length() ? Emoji.next(value, cursor) : cursor;
     }
 
     private boolean vertical(int direction, boolean select) {
@@ -195,7 +196,11 @@ public final class TextField {
 
     private int indexAtX(int[] line, int x) {
         int index = line[0];
-        while (index < line[1] && metrics.width(slice(line[0], index + 1)) - metrics.width(slice(index, index + 1)) / 2 <= x) index++;
+        while (index < line[1]) {
+            int next = Math.min(line[1], Emoji.next(value, index));
+            if (metrics.width(slice(line[0], next)) - metrics.width(slice(index, next)) / 2 > x) break;
+            index = next;
+        }
         return index;
     }
 
@@ -214,14 +219,15 @@ public final class TextField {
             int used = 0;
             int lastSpace = -1;
             while (end < hardEnd) {
-                int w = metrics.width(String.valueOf(value.charAt(end)));
+                int next = Math.min(hardEnd, Emoji.next(value, end));
+                int w = metrics.width(value.substring(end, next));
                 if (used + w > width) break;
                 if (value.charAt(end) == ' ') lastSpace = end;
                 used += w;
-                end++;
+                end = next;
             }
             if (end < hardEnd) {
-                int wrapAt = lastSpace >= start ? lastSpace + 1 : Math.max(end, start + 1);
+                int wrapAt = lastSpace >= start ? lastSpace + 1 : Math.max(end, Emoji.next(value, start));
                 lines.add(new int[]{start, wrapAt});
                 start = wrapAt;
             } else {

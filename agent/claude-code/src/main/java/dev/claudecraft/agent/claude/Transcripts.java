@@ -1,5 +1,6 @@
 package dev.claudecraft.agent.claude;
 
+import dev.claudecraft.agent.ImageData;
 import dev.claudecraft.agent.SessionListener;
 import dev.claudecraft.agent.SessionSummary;
 import dev.claudecraft.agent.ToolUse;
@@ -12,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -33,6 +35,7 @@ final class Transcripts {
     private static final int MAX_REPLAYED_MESSAGES = 400;
     private static final Set<String> CHAIN_TYPES = new HashSet<>(Arrays.asList("user", "assistant", "progress", "system", "attachment"));
     private static final Pattern COMMAND_NAME = Pattern.compile("<command-name>(.*?)</command-name>");
+    private static final Pattern COMMAND_OUTPUT = Pattern.compile("<local-command-std(?:out|err)>([\\s\\S]*?)</local-command-std(?:out|err)>");
     private static final Pattern SKIPPED_PROMPT = Pattern.compile(
         "^(?:<local-command-stdout>|<local-command-stderr>|<session-start-hook>|<tick>|<goal>|<system-reminder>|"
             + "\\[Request interrupted by user[^\\]]*\\]|\\s*<ide_opened_file>[\\s\\S]*</ide_opened_file>\\s*$|"
@@ -52,22 +55,50 @@ final class Transcripts {
 
     List<SessionSummary> list(Path workspace, int limit) {
         List<SessionSummary> summaries = new ArrayList<>();
-        for (Path file : newestFirst(directoryFor(workspace), "jsonl")) {
-            if (summaries.size() >= limit) break;
-            SessionSummary summary = summarize(file);
-            if (summary != null) summaries.add(summary);
+        for (Path cwd : workingDirectories(workspace)) {
+            List<Path> files = newestFirst(directoryFor(cwd), "jsonl");
+            for (Path file : files.subList(0, Math.min(files.size(), limit))) {
+                SessionSummary summary = summarize(file, cwd);
+                if (summary != null) summaries.add(summary);
+            }
         }
-        return summaries;
+        summaries.sort((a, b) -> Long.compare(b.updatedAt(), a.updatedAt()));
+        return summaries.subList(0, Math.min(limit, summaries.size()));
     }
 
-    void replay(Path workspace, String sessionId, SessionListener listener) {
-        Path file = directoryFor(workspace).resolve(sessionId + ".jsonl");
-        List<Json> chain = conversationChain(readEntries(file));
+    private static List<Path> workingDirectories(Path workspace) {
+        List<Path> directories = new ArrayList<>();
+        directories.add(workspace);
+        try (Stream<Path> worktrees = Files.list(workspace.resolve(".claude").resolve("worktrees"))) {
+            worktrees.filter(Files::isDirectory).forEach(directories::add);
+        } catch (IOException | UncheckedIOException ignored) {
+        }
+        return directories;
+    }
+
+    void replay(Path cwd, String sessionId, SessionListener listener) {
+        List<Json> chain = conversationChain(readEntries(transcript(cwd, sessionId)));
         for (Json entry : chain.subList(Math.max(0, chain.size() - MAX_REPLAYED_MESSAGES), chain.size())) {
             if (!isVisible(entry)) continue;
-            if ("assistant".equals(entry.get("type").asString())) replayAssistant(entry.get("message").get("content"), listener);
-            else replayUser(entry.get("message").get("content"), listener);
+            String type = entry.get("type").asString("");
+            if ("assistant".equals(type)) replayAssistant(entry.get("message").get("content"), listener);
+            else if ("system".equals(type)) replayCommand(entry.get("content").asString(""), listener);
+            else replayUser(entry, listener);
         }
+    }
+
+    void rename(Path cwd, String sessionId, String title) throws IOException {
+        String line = Json.object().put("type", "custom-title").put("customTitle", title).put("sessionId", sessionId) + "\n";
+        Files.write(transcript(cwd, sessionId), line.getBytes(StandardCharsets.UTF_8), StandardOpenOption.APPEND);
+    }
+
+    void delete(Path cwd, String sessionId) throws IOException {
+        Trash.move(transcript(cwd, sessionId));
+        Trash.move(directoryFor(cwd).resolve(sessionId));
+    }
+
+    private Path transcript(Path cwd, String sessionId) {
+        return directoryFor(cwd).resolve(sessionId + ".jsonl");
     }
 
     List<Path> recentWorkspaces(int limit) {
@@ -81,17 +112,6 @@ final class Transcripts {
             }
         }
         return new ArrayList<>(workspaces);
-    }
-
-    static String text(Json content) {
-        if (content.isString()) return content.asString();
-        List<String> parts = new ArrayList<>();
-        for (Json block : content.items()) {
-            String type = block.get("type").asString("");
-            if ("text".equals(type)) parts.add(block.get("text").asString(""));
-            else if ("image".equals(type)) parts.add("[image]");
-        }
-        return String.join("\n", parts);
     }
 
     static String directoryName(String path) {
@@ -120,7 +140,7 @@ final class Transcripts {
         return Normalizer.normalize(path.toString(), Normalizer.Form.NFC);
     }
 
-    private static SessionSummary summarize(Path file) {
+    private static SessionSummary summarize(Path file, Path cwd) {
         String head = peek(file, false);
         String tail = peek(file, true);
         if (head.isEmpty() || firstLine(head).contains("\"isSidechain\":true")) return null;
@@ -131,7 +151,7 @@ final class Transcripts {
             firstPrompt(head));
         if (title == null) return null;
         String id = file.getFileName().toString().replaceFirst("\\.jsonl$", "");
-        return new SessionSummary(id, title.replace('\n', ' ').trim(), lastModified(file));
+        return new SessionSummary(id, title.replace('\n', ' ').trim(), lastModified(file), cwd);
     }
 
     private static String lastField(String text, String key) {
@@ -150,7 +170,7 @@ final class Transcripts {
         for (String line : lines(head)) {
             if (!line.contains("\"type\":\"user\"") || line.contains("\"tool_result\"")
                 || line.contains("\"isMeta\":true") || line.contains("\"isCompactSummary\":true")) continue;
-            String text = text(tryParse(line).get("message").get("content")).replace('\n', ' ').trim();
+            String text = Protocol.text(tryParse(line).get("message").get("content")).replace('\n', ' ').trim();
             if (text.isEmpty()) continue;
             Matcher command = COMMAND_NAME.matcher(text);
             if (command.find()) {
@@ -215,7 +235,11 @@ final class Transcripts {
 
     private static boolean isMessage(Json entry) {
         String type = entry.get("type").asString("");
-        return "user".equals(type) || "assistant".equals(type);
+        return "user".equals(type) || "assistant".equals(type) || isLocalCommand(entry);
+    }
+
+    private static boolean isLocalCommand(Json entry) {
+        return "system".equals(entry.get("type").asString()) && "local_command".equals(entry.get("subtype").asString());
     }
 
     private static boolean isMainChain(Json entry) {
@@ -238,24 +262,34 @@ final class Transcripts {
         }
     }
 
-    private static void replayUser(Json content, SessionListener listener) {
+    private static void replayUser(Json entry, SessionListener listener) {
+        Json content = entry.get("message").get("content");
         if (content.isString()) {
-            replayPrompt(content.asString(), listener);
+            replayPrompt(content.asString(), Collections.<ImageData>emptyList(), listener);
             return;
         }
+        boolean prompt = false;
         for (Json block : content.items()) {
             String type = block.get("type").asString("");
-            if ("text".equals(type)) replayPrompt(block.get("text").asString(""), listener);
-            else if ("tool_result".equals(type)) {
-                listener.onToolResult(block.get("tool_use_id").asString(""), text(block.get("content")), block.get("is_error").asBoolean(false));
-            }
+            if ("tool_result".equals(type)) listener.onToolResult(Protocol.toolOutput(block, entry.get("toolUseResult")));
+            else prompt |= "text".equals(type) || "image".equals(type);
+        }
+        if (prompt) replayPrompt(Protocol.text(content), Protocol.images(content), listener);
+    }
+
+    private static void replayCommand(String content, SessionListener listener) {
+        Matcher output = COMMAND_OUTPUT.matcher(content);
+        if (output.find()) {
+            if (!output.group(1).trim().isEmpty()) listener.onText(output.group(1).trim());
+        } else if (!content.trim().isEmpty()) {
+            listener.onUserMessage(content.trim(), Collections.<ImageData>emptyList());
         }
     }
 
-    private static void replayPrompt(String text, SessionListener listener) {
+    private static void replayPrompt(String text, List<ImageData> images, SessionListener listener) {
         Matcher command = COMMAND_NAME.matcher(text);
-        if (command.find()) listener.onUserMessage(command.group(1));
-        else if (!text.trim().isEmpty() && !SKIPPED_PROMPT.matcher(text).find()) listener.onUserMessage(text);
+        if (command.find()) listener.onUserMessage(command.group(1), images);
+        else if ((!text.trim().isEmpty() || !images.isEmpty()) && !SKIPPED_PROMPT.matcher(text).find()) listener.onUserMessage(text, images);
     }
 
     private static Path workingDirectory(Path file) {

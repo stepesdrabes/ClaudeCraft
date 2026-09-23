@@ -33,4 +33,8 @@ final class FakeCanvas implements Canvas {
     @Override
     public void popClip() {
     }
+
+    @Override
+    public void image(Image image, int x, int y, int width, int height, int u, int v, int regionWidth, int regionHeight) {
+    }
 }

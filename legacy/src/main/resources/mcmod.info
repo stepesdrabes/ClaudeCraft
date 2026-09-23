@@ -1,7 +1,7 @@
 [{
   "modid": "${id}",
   "name": "${name}",
-  "description": "Claude inside Minecraft: chat with Claude Code while you play, and let it see and build in your world.",
+  "description": "Claude inside Minecraft: chat with Claude Code while you play, and let it see and build in your world. Emoji graphics by Twemoji (jdecked/twemoji), CC-BY 4.0.",
   "version": "${version}",
   "mcversion": "${minecraft}",
   "authorList": ["ClaudeCraft contributors"],

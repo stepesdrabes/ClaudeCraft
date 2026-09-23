@@ -5,6 +5,8 @@ import dev.claudecraft.agent.json.Json;
 public interface PermissionRequest {
     String id();
 
+    String toolUseId();
+
     String toolName();
 
     String title();
@@ -14,6 +16,8 @@ public interface PermissionRequest {
     boolean canRemember();
 
     void allow(boolean remember);
+
+    void allowAndSetMode(String mode);
 
     void deny(String message);
 }

@@ -1,3 +1,7 @@
+plugins {
+    id("claudecraft")
+}
+
 val libraries = listOf(":agent-api", ":agent-mcp", ":agent-claude-code", ":core")
 
 configure(libraries.map(::project)) {
@@ -36,4 +40,11 @@ tasks.register("prism") {
     description = "Creates or updates Prism Launcher test instances for a representative set of versions"
     val targets = listOf("26.3-fabric", "26.2-fabric", "1.21.11-fabric", "1.16.5-fabric", "1.21.1-neoforge", "1.20.1-forge")
     dependsOn(targets.map { ":platform:$it:prism" })
+}
+
+tasks.register<EmojiAtlas>("emojiAtlas") {
+    twemojiVersion = "17.0.3"
+    unicodeVersion = "17.0.0"
+    cellSize = 32
+    outputDirectory = file("core/src/main/resources/assets/claudecraft/emoji")
 }

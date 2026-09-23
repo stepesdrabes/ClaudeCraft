@@ -7,12 +7,16 @@ public final class ConnectorInfo {
     private final List<Mode> modes;
     private final List<Command> commands;
     private final String account;
+    private final String version;
+    private final String executable;
 
-    public ConnectorInfo(List<Model> models, List<Mode> modes, List<Command> commands, String account) {
+    public ConnectorInfo(List<Model> models, List<Mode> modes, List<Command> commands, String account, String version, String executable) {
         this.models = models;
         this.modes = modes;
         this.commands = commands;
         this.account = account;
+        this.version = version;
+        this.executable = executable;
     }
 
     public List<Model> models() {
@@ -31,6 +35,14 @@ public final class ConnectorInfo {
         return account;
     }
 
+    public String version() {
+        return version;
+    }
+
+    public String executable() {
+        return executable;
+    }
+
     public Model model(String id) {
         for (Model model : models) if (model.id().equals(id)) return model;
         return null;
@@ -40,11 +52,15 @@ public final class ConnectorInfo {
         private final String id;
         private final String label;
         private final String description;
+        private final List<String> effortLevels;
+        private final boolean available;
 
-        public Model(String id, String label, String description) {
+        public Model(String id, String label, String description, List<String> effortLevels, boolean available) {
             this.id = id;
             this.label = label;
             this.description = description;
+            this.effortLevels = effortLevels;
+            this.available = available;
         }
 
         public String id() {
@@ -57,6 +73,14 @@ public final class ConnectorInfo {
 
         public String description() {
             return description;
+        }
+
+        public List<String> effortLevels() {
+            return effortLevels;
+        }
+
+        public boolean available() {
+            return available;
         }
     }
 

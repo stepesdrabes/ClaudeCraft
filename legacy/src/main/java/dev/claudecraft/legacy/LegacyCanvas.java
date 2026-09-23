@@ -1,10 +1,12 @@
 package dev.claudecraft.legacy;
 
 import dev.claudecraft.core.ui.Canvas;
+import dev.claudecraft.core.ui.Image;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.renderer.GlStateManager;
 import org.lwjgl.opengl.GL11;
 
 import java.util.ArrayDeque;
@@ -45,6 +47,17 @@ final class LegacyCanvas implements Canvas {
     @Override
     public void text(String text, int x, int y, int argb, int style) {
         font.drawString(styled(text, style), x, y, argb, (style & SHADOW) != 0);
+    }
+
+    @Override
+    public void image(Image image, int x, int y, int width, int height, int u, int v, int regionWidth, int regionHeight) {
+        Minecraft.getMinecraft().getTextureManager().bindTexture(LegacyTextures.get(image));
+        GlStateManager.enableTexture2D();
+        GlStateManager.enableBlend();
+        GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0);
+        GlStateManager.color(1, 1, 1, 1);
+        Gui.drawScaledCustomSizeModalRect(x, y, u, v, regionWidth, regionHeight, width, height, image.width(), image.height());
+        GlStateManager.disableBlend();
     }
 
     @Override

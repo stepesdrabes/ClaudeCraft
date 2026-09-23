@@ -15,6 +15,12 @@ public interface Canvas extends TextMetrics {
 
     void popClip();
 
+    void image(Image image, int x, int y, int width, int height, int u, int v, int regionWidth, int regionHeight);
+
+    default void image(Image image, int x, int y, int width, int height) {
+        image(image, x, y, width, height, 0, 0, image.width(), image.height());
+    }
+
     default void text(String text, int x, int y, int argb) {
         text(text, x, y, argb, 0);
     }

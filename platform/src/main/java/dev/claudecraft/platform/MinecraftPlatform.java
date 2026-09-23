@@ -1,18 +1,22 @@
 package dev.claudecraft.platform;
 
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import dev.claudecraft.core.Platform;
 import dev.claudecraft.core.game.Game;
+import dev.claudecraft.core.ui.Image;
 import dev.claudecraft.core.ui.TextField;
 import dev.claudecraft.core.ui.TextMetrics;
 import dev.claudecraft.core.view.Panel;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.Screenshot;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.sounds.SoundEvents;
 
 import java.nio.file.Path;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 final class MinecraftPlatform implements Platform {
     private static final String MINECRAFT = /*$ minecraft*/ "26.2";
@@ -108,6 +112,21 @@ final class MinecraftPlatform implements Platform {
         Minecraft.getInstance().gui.setScreen(screen);
         //?} else
         //Minecraft.getInstance().setScreen(screen);
+    }
+
+    @Override
+    public void screenshot(Consumer<Image> done) {
+        Minecraft minecraft = Minecraft.getInstance();
+        //? if >=26.2 {
+        RenderTarget target = minecraft.gameRenderer.mainRenderTarget();
+        //?} else
+        //RenderTarget target = minecraft.getMainRenderTarget();
+        //? if >=1.21.5 {
+        Screenshot.takeScreenshot(target, image -> done.accept(Textures.read(image)));
+        //?} elif >=1.17 {
+        /*done.accept(Textures.read(Screenshot.takeScreenshot(target)));
+        *///?} else
+        //done.accept(Textures.read(Screenshot.takeScreenshot(minecraft.getWindow().getWidth(), minecraft.getWindow().getHeight(), target)));
     }
 
     @Override

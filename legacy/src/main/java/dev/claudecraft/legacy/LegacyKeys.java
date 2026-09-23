@@ -27,6 +27,7 @@ final class LegacyKeys {
         KEYS.put(Keyboard.KEY_PRIOR, Key.PAGE_UP);
         KEYS.put(Keyboard.KEY_NEXT, Key.PAGE_DOWN);
         KEYS.put(Keyboard.KEY_A, Key.A);
+        KEYS.put(Keyboard.KEY_B, Key.B);
         KEYS.put(Keyboard.KEY_C, Key.C);
         KEYS.put(Keyboard.KEY_N, Key.N);
         KEYS.put(Keyboard.KEY_V, Key.V);
