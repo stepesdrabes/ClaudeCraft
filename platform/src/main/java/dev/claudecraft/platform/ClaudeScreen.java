@@ -26,6 +26,8 @@ final class ClaudeScreen extends Screen {
     @Override
     protected void init() {
         panel.resize(width, height);
+        //? if >=26.3
+        //minecraft.textInputManager().startTextInput(this);
     }
 
     @Override
@@ -76,7 +78,7 @@ final class ClaudeScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        return panel.mouseClicked(event.x(), event.y(), event.button());
+        return panel.mouseClicked(event.x(), event.y(), Keys.button(event.button()));
     }
 
     @Override
@@ -129,6 +131,8 @@ final class ClaudeScreen extends Screen {
 
     @Override
     public void removed() {
+        //? if >=26.3
+        //minecraft.textInputManager().stopTextInput(this);
         panel.removed();
     }
 

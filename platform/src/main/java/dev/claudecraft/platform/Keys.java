@@ -61,6 +61,13 @@ final class Keys {
     }
     *///?}
 
+    //? if >=1.21.9 {
+    static int button(int button) {
+        if (button == InputConstants.MOUSE_BUTTON_LEFT) return 0;
+        return button == InputConstants.MOUSE_BUTTON_RIGHT ? 1 : 2;
+    }
+    //?}
+
     //? if >=1.21.11 {
     private static int modifiers(KeyEvent event) {
         int modifiers = 0;
