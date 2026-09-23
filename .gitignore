@@ -1,0 +1,10 @@
+.gradle/
+build/
+out/
+run/
+.idea/
+*.iml
+.DS_Store
+.kotlin/
+versions/*/build/
+.eclipse/

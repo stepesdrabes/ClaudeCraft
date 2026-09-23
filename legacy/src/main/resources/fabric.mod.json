@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "${id}",
+  "version": "${version}",
+  "name": "${name}",
+  "description": "Claude inside Minecraft: chat with Claude Code while you play, and let it see and build in your world.",
+  "authors": ["ClaudeCraft contributors"],
+  "license": "All Rights Reserved",
+  "icon": "assets/claudecraft/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.claudecraft.legacy.fabric.LegacyFabricClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.15",
+    "minecraft": "${minecraft}",
+    "legacy-fabric-api": "*"
+  }
+}
